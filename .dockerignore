@@ -1,4 +1,74 @@
+# Build outputs (we build inside Docker)
 build
-**/*.ts
+build-dist
+
+# Dependencies (installed during build)
 **/node_modules
+
+# Git
+.git
+.gitignore
+
+# IDE and editor files
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Test files and data
+**/*.test.ts
+**/*.spec.ts
+**/__tests__
+**/test
+coverage
+.nyc_output
+**/.data-test
+
+# Documentation
+docs
+
+# Development files
+.eslintcache
+.eslintrc.js
+*.md
+!README.md
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files (don't copy secrets)
+.env
+.env.*
+!.env.defaults
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker files (not needed inside container)
+Dockerfile*
+docker-compose*.yaml
+docker-compose*.yml
+.dockerignore
+
+# Temporary and cache files
+tmp
+temp
+*.tmp
+*.temp
+.cache
+
+# Large data directories that are regenerated
+double-agent/probe-data
+double-agent-stacks/data/local/3-assignments
+double-agent-stacks/data/local/4-assignment-results
+double-agent-stacks/data/external/0-foundational-profiles
+double-agent-stacks/data/external/3-assignments
+double-agent-stacks/data/external/4-assignment-results
+
+# Socket files
 **socket/connect
