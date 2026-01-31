@@ -118,7 +118,13 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error('Unhandled error:', error);
-  process.exit(1);
-});
+// Export for testing
+module.exports = { HeroApiServer, main, PORT, HOST };
+
+// Run main() only when this file is the entry point
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('Unhandled error:', error);
+    process.exit(1);
+  });
+}
