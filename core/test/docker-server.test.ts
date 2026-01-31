@@ -1,10 +1,27 @@
 import WebSocket = require('ws');
-import { AddressInfo } from 'net';
+import * as http from 'http';
 import Core from '../index';
 import { WsTransportToCore, ConnectionToCore } from '@ulixee/net';
 
 // Import the docker-server module (will be at root after build)
 const dockerServerPath = require.resolve('../../docker-server.js');
+
+// Helper to make HTTP requests
+function httpRequest(
+  options: http.RequestOptions,
+  body?: string,
+): Promise<{ statusCode: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => (data += chunk));
+      res.on('end', () => resolve({ statusCode: res.statusCode!, body: data }));
+    });
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
 
 describe('HeroApiServer', () => {
   let HeroApiServer: any;
@@ -50,30 +67,32 @@ describe('HeroApiServer', () => {
       server = new HeroApiServer('localhost', 0);
       expect(server.host).toBe('localhost');
       expect(server.port).toBe(0);
-      expect(server.wsServer).toBeNull();
+      expect(server.server).toBeNull();
       expect(server.core).toBeNull();
-      expect(server.connections).toBeInstanceOf(Set);
-      expect(server.connections.size).toBe(0);
+      expect(server.wsConnections).toBeInstanceOf(Set);
+      expect(server.wsConnections.size).toBe(0);
+      expect(server.sessions).toBeInstanceOf(Map);
+      expect(server.sessions.size).toBe(0);
+      expect(server.app).toBeDefined();
     });
   });
 
   describe('start()', () => {
     it('should start the server and return address info', async () => {
       server = new HeroApiServer('127.0.0.1', 0);
-      const address = await server.start();
+      const info = await server.start();
 
-      expect(address).toBeDefined();
-      expect(address.port).toBeGreaterThan(0);
-      expect(address.address).toBe('127.0.0.1');
-      expect(server.wsServer).not.toBeNull();
+      expect(info).toBeDefined();
+      expect(info.port).toBeGreaterThan(0);
+      expect(server.server).not.toBeNull();
       expect(server.core).not.toBeNull();
     });
 
     it('should reject on server error', async () => {
       // Start a server on a specific port
       server = new HeroApiServer('127.0.0.1', 0);
-      await server.start();
-      const usedPort = (server.wsServer.address() as AddressInfo).port;
+      const info = await server.start();
+      const usedPort = info.port;
 
       // Try to start another server on the same port
       const server2 = new HeroApiServer('127.0.0.1', usedPort);
@@ -89,48 +108,206 @@ describe('HeroApiServer', () => {
     });
   });
 
-  describe('handleConnection()', () => {
-    it('should handle client connections', async () => {
+  describe('HTTP API endpoints', () => {
+    let port: number;
+
+    beforeEach(async () => {
       server = new HeroApiServer('127.0.0.1', 0);
-      const address = await server.start();
-
-      const ws = new WebSocket(`ws://127.0.0.1:${address.port}`);
-
-      await new Promise<void>((resolve, reject) => {
-        ws.on('open', () => {
-          expect(server.connections.size).toBe(1);
-          resolve();
-        });
-        ws.on('error', reject);
-      });
-
-      ws.close();
-
-      // Wait for close event to propagate
-      await new Promise(resolve => setTimeout(resolve, 100));
-      expect(server.connections.size).toBe(0);
+      const info = await server.start();
+      port = info.port;
     });
 
-    it('should handle client errors', async () => {
-      server = new HeroApiServer('127.0.0.1', 0);
-      const address = await server.start();
-
-      const ws = new WebSocket(`ws://127.0.0.1:${address.port}`);
-
-      await new Promise<void>((resolve) => {
-        ws.on('open', resolve);
+    it('GET / should return server info', async () => {
+      const res = await httpRequest({
+        hostname: '127.0.0.1',
+        port,
+        path: '/',
+        method: 'GET',
       });
 
-      // Simulate error event on server-side connection
-      const clientWs = Array.from(server.wsServer.clients)[0] as WebSocket;
-      expect(clientWs).toBeDefined();
-      clientWs.emit('error', new Error('Test error'));
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.name).toBe('Hero API Server');
+      expect(body.status).toBe('running');
+      expect(body.endpoints).toBeDefined();
+    });
 
-      // Connection should still exist (errors don't close the connection)
-      expect(server.connections.size).toBe(1);
+    it('GET /health should return health status', async () => {
+      const res = await httpRequest({
+        hostname: '127.0.0.1',
+        port,
+        path: '/health',
+        method: 'GET',
+      });
 
-      ws.close();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.status).toBe('healthy');
+      expect(body.uptime).toBeGreaterThanOrEqual(0);
+      expect(body.memory).toBeDefined();
+      expect(typeof body.sessions).toBe('number');
+      expect(typeof body.wsConnections).toBe('number');
+    });
+
+    it('GET /api/info should return detailed info', async () => {
+      const res = await httpRequest({
+        hostname: '127.0.0.1',
+        port,
+        path: '/api/info',
+        method: 'GET',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.name).toBe('Hero API Server');
+      expect(body.nodeVersion).toContain('v');
+      expect(body.platform).toBeDefined();
+    });
+
+    it('GET /api/sessions should return empty list initially', async () => {
+      const res = await httpRequest({
+        hostname: '127.0.0.1',
+        port,
+        path: '/api/sessions',
+        method: 'GET',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.sessions).toEqual([]);
+      expect(body.total).toBe(0);
+    });
+
+    it('POST /api/sessions should create a session', async () => {
+      const res = await httpRequest(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/api/sessions',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        JSON.stringify({ viewport: { width: 1920, height: 1080 } }),
+      );
+
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      expect(body.success).toBe(true);
+      expect(body.session).toBeDefined();
+      expect(body.session.id).toContain('session-');
+      expect(body.wsUrl).toContain('/ws?sessionId=');
+    });
+
+    it('GET /api/sessions/:id should return session details', async () => {
+      // Create a session first
+      const createRes = await httpRequest(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/api/sessions',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        '{}',
+      );
+      const { session } = JSON.parse(createRes.body);
+
+      // Get session details
+      const res = await httpRequest({
+        hostname: '127.0.0.1',
+        port,
+        path: `/api/sessions/${session.id}`,
+        method: 'GET',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.session.id).toBe(session.id);
+    });
+
+    it('GET /api/sessions/:id should return 404 for non-existent session', async () => {
+      const res = await httpRequest({
+        hostname: '127.0.0.1',
+        port,
+        path: '/api/sessions/non-existent',
+        method: 'GET',
+      });
+
+      expect(res.statusCode).toBe(404);
+      const body = JSON.parse(res.body);
+      expect(body.error).toBe('Session not found');
+    });
+
+    it('DELETE /api/sessions/:id should delete a session', async () => {
+      // Create a session first
+      const createRes = await httpRequest(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/api/sessions',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        '{}',
+      );
+      const { session } = JSON.parse(createRes.body);
+
+      // Delete the session
+      const res = await httpRequest({
+        hostname: '127.0.0.1',
+        port,
+        path: `/api/sessions/${session.id}`,
+        method: 'DELETE',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.success).toBe(true);
+
+      // Verify it's deleted
+      const getRes = await httpRequest({
+        hostname: '127.0.0.1',
+        port,
+        path: `/api/sessions/${session.id}`,
+        method: 'GET',
+      });
+      expect(getRes.statusCode).toBe(404);
+    });
+
+    it('POST /api/scrape should return hint message', async () => {
+      const res = await httpRequest(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/api/scrape',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        JSON.stringify({ url: 'https://example.com', selector: '.content' }),
+      );
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.success).toBe(true);
+      expect(body.message).toContain('WebSocket');
+      expect(body.requestedUrl).toBe('https://example.com');
+    });
+
+    it('POST /api/scrape should require URL', async () => {
+      const res = await httpRequest(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/api/scrape',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        '{}',
+      );
+
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.body);
+      expect(body.error).toBe('URL is required');
     });
   });
 
@@ -139,34 +316,13 @@ describe('HeroApiServer', () => {
       server = new HeroApiServer('127.0.0.1', 0);
       await server.start();
 
-      expect(server.wsServer).not.toBeNull();
+      expect(server.server).not.toBeNull();
       expect(server.core).not.toBeNull();
 
       await server.shutdown();
 
-      // Server should be closed
-      expect(server.connections.size).toBe(0);
-    });
-
-    it('should disconnect all clients on shutdown', async () => {
-      server = new HeroApiServer('127.0.0.1', 0);
-      const address = await server.start();
-
-      // Connect a client
-      const ws = new WebSocket(`ws://127.0.0.1:${address.port}`);
-      await new Promise<void>(resolve => {
-        ws.on('open', resolve);
-      });
-
-      expect(server.connections.size).toBe(1);
-
-      await server.shutdown();
-
-      expect(server.connections.size).toBe(0);
-
-      // Client should be disconnected
-      await new Promise(resolve => setTimeout(resolve, 100));
-      expect(ws.readyState).toBe(WebSocket.CLOSED);
+      expect(server.wsConnections.size).toBe(0);
+      expect(server.sessions.size).toBe(0);
     });
 
     it('should handle shutdown with no server running', async () => {
@@ -177,24 +333,16 @@ describe('HeroApiServer', () => {
 
     it('should handle disconnect errors gracefully', async () => {
       server = new HeroApiServer('127.0.0.1', 0);
-      const address = await server.start();
-
-      // Connect a client
-      const ws = new WebSocket(`ws://127.0.0.1:${address.port}`);
-      await new Promise<void>(resolve => {
-        ws.on('open', resolve);
-      });
+      await server.start();
 
       // Mock a connection that throws on disconnect
       const mockConnection = {
         disconnect: jest.fn().mockRejectedValue(new Error('Disconnect error')),
       };
-      server.connections.add(mockConnection);
+      server.wsConnections.add(mockConnection);
 
       // Shutdown should not throw despite disconnect error
       await expect(server.shutdown()).resolves.not.toThrow();
-
-      ws.close();
     });
   });
 
@@ -222,19 +370,25 @@ describe('HeroApiServer', () => {
     });
   });
 
-  describe('WebSocket transport integration', () => {
-    it('should accept connections and respond to commands', async () => {
+  describe('WebSocket endpoint', () => {
+    it('should accept WebSocket connections on /ws', async () => {
       server = new HeroApiServer('127.0.0.1', 0);
-      const address = await server.start();
+      const info = await server.start();
 
-      const transport = new WsTransportToCore(`ws://127.0.0.1:${address.port}`);
-      const connection = new ConnectionToCore(transport);
+      const ws = new WebSocket(`ws://127.0.0.1:${info.port}/ws`);
 
-      // The connection should be established
-      await new Promise(resolve => setTimeout(resolve, 200));
-      expect(server.connections.size).toBe(1);
+      await new Promise<void>((resolve, reject) => {
+        ws.on('open', () => {
+          // Give time for connection to be registered
+          setTimeout(() => {
+            expect(server.wsConnections.size).toBe(1);
+            resolve();
+          }, 100);
+        });
+        ws.on('error', reject);
+      });
 
-      await connection.disconnect();
+      ws.close();
       await new Promise(resolve => setTimeout(resolve, 100));
     });
   });

@@ -112,6 +112,9 @@ COPY --from=builder /app/build-dist /app
 # Copy server entry point
 COPY docker-server.js /app/server.js
 
+# Install Hono dependencies for the API server
+RUN npm install --no-save hono @hono/node-server @hono/node-ws
+
 # Create data directory for persistence
 RUN mkdir -p /data && chown -R hero:hero /data /app
 
@@ -128,9 +131,9 @@ USER hero
 # Expose WebSocket API port
 EXPOSE 1337
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD node -e "const ws = new (require('ws'))('ws://localhost:${HERO_PORT}'); ws.on('open', () => process.exit(0)); ws.on('error', () => process.exit(1)); setTimeout(() => process.exit(1), 5000);"
+# Health check using HTTP endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:' + (process.env.HERO_PORT || 1337) + '/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
 # Start the Hero API server
 CMD ["node", "server.js"]

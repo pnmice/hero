@@ -1,7 +1,7 @@
 # Hero API Server Makefile
 # Common commands for development, testing, and Docker operations
 
-.PHONY: help install build build-dist clean lint test test-coverage \
+.PHONY: help install build build-dist clean lint lint-fix test coverage coverage-text \
         docker-build docker-run docker-stop docker-logs docker-shell \
         docker-compose-up docker-compose-down docker-compose-logs \
         docker-compose-build docker-compose-restart docker-clean
@@ -21,7 +21,8 @@ help:
 	@echo "  make lint             - Run ESLint"
 	@echo "  make lint-fix         - Run ESLint with auto-fix"
 	@echo "  make test             - Run all tests"
-	@echo "  make test-coverage    - Run tests with coverage report"
+	@echo "  make coverage         - Run tests with coverage (HTML + LCOV)"
+	@echo "  make coverage-text    - Run tests with coverage (text output)"
 	@echo "  make test-docker      - Run docker-server tests only"
 	@echo ""
 	@echo "Docker (standalone):"
@@ -54,7 +55,7 @@ build-dist:
 
 clean:
 	yarn clean
-	rm -rf build build-dist
+	rm -rf build build-dist coverage
 
 watch:
 	yarn watch
@@ -72,9 +73,14 @@ lint-fix:
 test:
 	yarn test
 
-test-coverage:
+coverage:
 	cd build && cross-env ULX_DATA_DIR=.data-test NODE_ENV=test \
-		jest --coverage --coverageReporters=text --coverageReporters=lcov
+		jest --coverage --coverageReporters=html --coverageReporters=lcov \
+		--coverageDirectory=../coverage
+
+coverage-text:
+	cd build && cross-env ULX_DATA_DIR=.data-test NODE_ENV=test \
+		jest --coverage --coverageReporters=text --coverageReporters=text-summary
 
 test-docker:
 	cd build && cross-env ULX_DATA_DIR=.data-test NODE_ENV=test \
