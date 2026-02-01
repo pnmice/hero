@@ -2,8 +2,14 @@
 *.config.js
 tsconfig*.json
 build
+build-dist
 double-agent
 jest.*.js
 **/install.js
 **/updateSeccompProfile.js
 docs/**/*.ts
+docker-server.js
+Makefile
+Dockerfile
+docker-compose*.yaml
+docker-compose*.yml
