@@ -28,7 +28,8 @@ jobs:
       - name: Set up Go 1.x
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.22'
+          cache-dependency-path: agent/mitm-socket/go/go.sum
 
       - name: Build Sockets
         uses: goreleaser/goreleaser-action@v6
