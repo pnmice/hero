@@ -309,6 +309,120 @@ describe('HeroApiServer', () => {
       const body = JSON.parse(res.body);
       expect(body.error).toBe('URL is required');
     });
+
+    it('POST /api/scrape should handle invalid JSON', async () => {
+      const res = await httpRequest(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/api/scrape',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        'invalid json',
+      );
+
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.body);
+      expect(body.error).toBeDefined();
+    });
+
+    it('POST /api/screenshot should return hint message', async () => {
+      const res = await httpRequest(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/api/screenshot',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        JSON.stringify({ url: 'https://example.com', fullPage: true, format: 'png' }),
+      );
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.success).toBe(true);
+      expect(body.message).toContain('WebSocket');
+      expect(body.requestedUrl).toBe('https://example.com');
+      expect(body.fullPage).toBe(true);
+      expect(body.format).toBe('png');
+    });
+
+    it('POST /api/screenshot should require URL', async () => {
+      const res = await httpRequest(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/api/screenshot',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        '{}',
+      );
+
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.body);
+      expect(body.error).toBe('URL is required');
+    });
+
+    it('POST /api/screenshot should handle invalid JSON', async () => {
+      const res = await httpRequest(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/api/screenshot',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        'invalid json',
+      );
+
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.body);
+      expect(body.error).toBeDefined();
+    });
+
+    it('DELETE /api/sessions/:id should return 404 for non-existent session', async () => {
+      const res = await httpRequest({
+        hostname: '127.0.0.1',
+        port,
+        path: '/api/sessions/non-existent',
+        method: 'DELETE',
+      });
+
+      expect(res.statusCode).toBe(404);
+      const body = JSON.parse(res.body);
+      expect(body.error).toBe('Session not found');
+    });
+
+    it('GET /api/sessions should list created sessions', async () => {
+      // Create a session first
+      await httpRequest(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/api/sessions',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        '{}',
+      );
+
+      const res = await httpRequest({
+        hostname: '127.0.0.1',
+        port,
+        path: '/api/sessions',
+        method: 'GET',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.sessions.length).toBe(1);
+      expect(body.total).toBe(1);
+      expect(body.sessions[0].id).toContain('session-');
+      expect(body.sessions[0].createdAt).toBeDefined();
+      expect(body.sessions[0].status).toBe('created');
+    });
   });
 
   describe('shutdown()', () => {
